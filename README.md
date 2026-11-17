@@ -23,6 +23,19 @@ cmake --build build -j
 
 Pour un build optimisé, remplacer `Debug` par `Release`.
 
+## Mode headless
+
+Sans fenêtre ni SDL vidéo, pour les tests et la vérification du rendu :
+
+```sh
+./build/goodmaxton --headless --frames 600 --dump /tmp/out.ppm
+```
+
+- `--frames N` : nombre de pas de simulation (1/120 s chacun), déterministe.
+- `--dump fichier.ppm` : écrit le framebuffer final au format PPM.
+- Code de sortie : 0 si tout va bien, 1 en cas d'erreur d'exécution, 2 si les
+  arguments sont invalides.
+
 ## Contrôles
 
 On se déplace au clavier, puis on vise et on tire à la souris.

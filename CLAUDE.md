@@ -34,6 +34,19 @@ cmake --build build -j
 SDL3 est récupéré via FetchContent, puis compilé en statique, avec un tag de
 release épinglé dans `CMakeLists.txt`.
 
+## Tests en headless
+
+Pour vérifier le rendu ou la simulation sans fenêtre, utiliser le mode
+headless (voir README) puis convertir l'image : 
+
+```sh
+./build/goodmaxton --headless --frames 600 --dump /tmp/out.ppm
+convert /tmp/out.ppm /tmp/out.png   # puis lire le PNG
+```
+
+Toute nouvelle fonctionnalité de simulation doit rester testable ainsi : le mode
+headless ne doit jamais initialiser SDL.
+
 ## Règles techniques
 
 - **Rendu** : tout est dessiné par le CPU dans un framebuffer `uint32_t`
