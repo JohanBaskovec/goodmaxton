@@ -5,132 +5,158 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "draw.h"
+#include "game.h"
 #include "render.h"
-
-/* Dimensions officielles du terrain, en mètres. Repère centré sur le filet :
- * x vers la droite de l'écran, y vers le bas (côté humain). */
-#define COURT_HALF_LENGTH 6.70f
-#define COURT_HALF_WIDTH_DOUBLES 3.05f
-#define COURT_HALF_WIDTH_SINGLES 2.59f
-#define SHORT_SERVICE_LINE 1.98f
-#define LONG_SERVICE_LINE_DOUBLES 5.94f
-#define LINE_WIDTH 0.04f
-#define VIEW_MARGIN 1.2f
-
-typedef struct {
-    float scale; /* pixels par mètre */
-    float ox, oy; /* position du centre du filet à l'écran */
-} View;
-
-static View view_fit(int w, int h)
-{
-    float sw = (float)w / (2.0f * (COURT_HALF_WIDTH_DOUBLES + VIEW_MARGIN));
-    float sh = (float)h / (2.0f * (COURT_HALF_LENGTH + VIEW_MARGIN));
-    View v;
-    v.scale = sw < sh ? sw : sh;
-    v.ox = (float)w * 0.5f;
-    v.oy = (float)h * 0.5f;
-    return v;
-}
-
-static float vx(const View *v, float x) { return v->ox + x * v->scale; }
-static float vy(const View *v, float y) { return v->oy + y * v->scale; }
-
-static void draw_line_m(Framebuffer *fb, const View *v, float x0, float y0, float x1, float y1,
-                        Color c)
-{
-    fb_line(fb, vx(v, x0), vy(v, y0), vx(v, x1), vy(v, y1), LINE_WIDTH * v->scale, c);
-}
-
-static void draw_court(Framebuffer *fb, const View *v)
-{
-    const Color floor_out = RGB(34, 52, 78);
-    const Color floor_in = RGB(46, 120, 92);
-    const Color line = RGB(240, 244, 240);
-
-    fb_clear(fb, floor_out);
-
-    fb_fill_rect(fb, vx(v, -COURT_HALF_WIDTH_DOUBLES), vy(v, -COURT_HALF_LENGTH),
-                 vx(v, COURT_HALF_WIDTH_DOUBLES), vy(v, COURT_HALF_LENGTH), floor_in);
-
-    const float dw = COURT_HALF_WIDTH_DOUBLES, sw = COURT_HALF_WIDTH_SINGLES;
-    const float hl = COURT_HALF_LENGTH, ss = SHORT_SERVICE_LINE;
-
-    /* Contour du double et lignes de fond. */
-    draw_line_m(fb, v, -dw, -hl, dw, -hl, line);
-    draw_line_m(fb, v, -dw, hl, dw, hl, line);
-    draw_line_m(fb, v, -dw, -hl, -dw, hl, line);
-    draw_line_m(fb, v, dw, -hl, dw, hl, line);
-    /* Lignes latérales du simple. */
-    draw_line_m(fb, v, -sw, -hl, -sw, hl, line);
-    draw_line_m(fb, v, sw, -hl, sw, hl, line);
-    /* Lignes de service court. */
-    draw_line_m(fb, v, -dw, -ss, dw, -ss, line);
-    draw_line_m(fb, v, -dw, ss, dw, ss, line);
-    /* Lignes de service long du double. */
-    draw_line_m(fb, v, -dw, -LONG_SERVICE_LINE_DOUBLES, dw, -LONG_SERVICE_LINE_DOUBLES, line);
-    draw_line_m(fb, v, -dw, LONG_SERVICE_LINE_DOUBLES, dw, LONG_SERVICE_LINE_DOUBLES, line);
-    /* Ligne médiane. */
-    draw_line_m(fb, v, 0.0f, -hl, 0.0f, -ss, line);
-    draw_line_m(fb, v, 0.0f, ss, 0.0f, hl, line);
-
-    /* Filet et poteaux. */
-    const float post_x = dw + 0.1f;
-    fb_line(fb, vx(v, -post_x), vy(v, 0.0f), vx(v, post_x), vy(v, 0.0f), 0.05f * v->scale,
-            RGB(250, 250, 250));
-    fb_disc(fb, vx(v, -post_x), vy(v, 0.0f), 0.09f * v->scale, RGB(60, 60, 66));
-    fb_disc(fb, vx(v, post_x), vy(v, 0.0f), 0.09f * v->scale, RGB(60, 60, 66));
-}
 
 #define DEFAULT_WIDTH 720
 #define DEFAULT_HEIGHT 1080
+#define MAX_SCRIPT_SEGMENTS 256
+#define MAX_SHOTS 256
+#define MAX_FRAME_TIME 0.25 /* secondes : évite la spirale de la mort */
+
+/* Un segment de script : des entrées maintenues pendant `frames` pas. */
+typedef struct {
+    Input in;
+    long frames;
+} ScriptSegment;
 
 typedef struct {
     bool headless;
-    long frames;           /* nombre de pas de simulation en mode headless */
-    const char *dump_path; /* image PPM du framebuffer final (headless) */
+    long frames;           /* nombre de pas de simulation (headless) */
+    const char *script;    /* entrées scriptées, ex. "u:120,ur:60,-:30" */
+    const char *shot_path; /* capture (.png ou .ppm) ; contient %d avec --shot-at/-every */
+    const char *shot_at;   /* pas des captures, ex. "0,60,120" */
+    long shot_every;       /* une capture tous les N pas */
+    uint64_t seed;         /* graine du générateur aléatoire de la simulation */
+    bool print_state;      /* affiche l'état final sur stdout (headless) */
 } Options;
 
 static void usage(const char *prog)
 {
     fprintf(stderr,
-            "Usage: %s [--headless [--frames N] [--dump fichier.ppm]]\n"
-            "  --headless      aucune fenêtre ni SDL vidéo ; simule puis quitte\n"
-            "  --frames N      nombre de pas de simulation (défaut 0)\n"
-            "  --dump fichier  écrit le framebuffer final au format PPM\n",
+            "Usage: %s [--headless [options]]\n"
+            "  --headless        aucune fenêtre ni SDL vidéo ; simule puis quitte\n"
+            "  --frames N        nombre de pas de simulation, sans entrées (défaut 0)\n"
+            "  --script S        entrées maintenues, segments \"touches:pas\" séparés par des\n"
+            "                    virgules ; touches = u d l r combinés, ou - pour aucune.\n"
+            "                    Exemple : u:120,ur:60,-:30\n"
+            "  --seed N          graine aléatoire de la simulation (défaut 1)\n"
+            "  --shot f          capture du framebuffer final, au format .png ou .ppm\n"
+            "  --shot-at L       captures aux pas listés (ex. 0,60,120) ; f doit contenir %%d\n"
+            "  --shot-every N    une capture tous les N pas ; f doit contenir %%d\n"
+            "  --state           affiche l'état final de la simulation sur stdout\n",
             prog);
+}
+
+static bool parse_long(const char *s, long *out)
+{
+    char *end;
+    *out = strtol(s, &end, 10);
+    return *s != '\0' && *end == '\0' && *out >= 0;
+}
+
+/* Vrai si le gabarit contient exactement un %d et aucun autre %. */
+static bool path_has_step_placeholder(const char *path)
+{
+    int n = 0;
+    for (const char *c = path; *c; c++) {
+        if (*c != '%')
+            continue;
+        if (c[1] != 'd')
+            return false;
+        n++;
+        c++;
+    }
+    return n == 1;
 }
 
 static int parse_args(int argc, char **argv, Options *o)
 {
     memset(o, 0, sizeof *o);
+    o->seed = 1;
     for (int i = 1; i < argc; i++) {
+        long v;
         if (strcmp(argv[i], "--headless") == 0) {
             o->headless = true;
         } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
-            char *end;
-            o->frames = strtol(argv[++i], &end, 10);
-            if (*end != '\0' || o->frames < 0)
+            if (!parse_long(argv[++i], &o->frames))
                 return -1;
-        } else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) {
-            o->dump_path = argv[++i];
+        } else if (strcmp(argv[i], "--script") == 0 && i + 1 < argc) {
+            o->script = argv[++i];
+        } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
+            if (!parse_long(argv[++i], &v))
+                return -1;
+            o->seed = (uint64_t)v;
+        } else if (strcmp(argv[i], "--shot") == 0 && i + 1 < argc) {
+            o->shot_path = argv[++i];
+        } else if (strcmp(argv[i], "--shot-at") == 0 && i + 1 < argc) {
+            o->shot_at = argv[++i];
+        } else if (strcmp(argv[i], "--shot-every") == 0 && i + 1 < argc) {
+            if (!parse_long(argv[++i], &o->shot_every) || o->shot_every == 0)
+                return -1;
+        } else if (strcmp(argv[i], "--state") == 0) {
+            o->print_state = true;
         } else {
             return -1;
         }
     }
-    if (!o->headless && (o->frames != 0 || o->dump_path))
+    bool headless_only = o->frames != 0 || o->script || o->shot_path || o->shot_at ||
+                         o->shot_every != 0 || o->print_state || o->seed != 1;
+    if (!o->headless && headless_only)
+        return -1;
+    if (o->frames != 0 && o->script)
+        return -1;
+    if ((o->shot_at || o->shot_every != 0) &&
+        (!o->shot_path || !path_has_step_placeholder(o->shot_path)))
+        return -1;
+    if (o->shot_at && o->shot_every != 0)
+        return -1;
+    if (o->shot_path && !o->shot_at && o->shot_every == 0 && strchr(o->shot_path, '%'))
         return -1;
     return 0;
 }
 
-/* Dessine une frame complète dans le framebuffer. */
-static void render_frame(Framebuffer *fb)
+/* Analyse un script. Retourne le nombre de segments, ou -1 si invalide. */
+static int script_parse(const char *s, ScriptSegment *out, int max)
 {
-    View view = view_fit(fb->w, fb->h);
-    draw_court(fb, &view);
+    int n = 0;
+    while (*s) {
+        if (n >= max)
+            return -1;
+        ScriptSegment seg = {0};
+        if (*s == '-') {
+            s++;
+        } else {
+            if (*s == ':')
+                return -1;
+            for (; *s && *s != ':'; s++) {
+                switch (*s) {
+                case 'u': seg.in.up = true; break;
+                case 'd': seg.in.down = true; break;
+                case 'l': seg.in.left = true; break;
+                case 'r': seg.in.right = true; break;
+                default: return -1;
+                }
+            }
+        }
+        if (*s != ':')
+            return -1;
+        char *end;
+        seg.frames = strtol(s + 1, &end, 10);
+        if (end == s + 1 || seg.frames < 0)
+            return -1;
+        s = end;
+        if (*s == ',')
+            s++;
+        else if (*s != '\0')
+            return -1;
+        out[n++] = seg;
+    }
+    return n;
 }
 
-static int dump_ppm(const Framebuffer *fb, const char *path)
+static int save_ppm(const Framebuffer *fb, const char *path)
 {
     FILE *f = fopen(path, "wb");
     if (!f) {
@@ -151,23 +177,155 @@ static int dump_ppm(const Framebuffer *fb, const char *path)
     return 0;
 }
 
-/* Mode headless : pas de SDL, simulation déterministe à pas fixe, image finale. */
+static int save_png(const Framebuffer *fb, const char *path)
+{
+    SDL_Surface *surf = SDL_CreateSurfaceFrom(fb->w, fb->h, SDL_PIXELFORMAT_XRGB8888, fb->px,
+                                              fb->w * (int)sizeof(uint32_t));
+    if (!surf) {
+        fprintf(stderr, "%s: %s\n", path, SDL_GetError());
+        return -1;
+    }
+    bool ok = SDL_SavePNG(surf, path);
+    if (!ok)
+        fprintf(stderr, "%s: %s\n", path, SDL_GetError());
+    SDL_DestroySurface(surf);
+    return ok ? 0 : -1;
+}
+
+/* Écrit le framebuffer ; le format dépend de l'extension (.png, sinon PPM). */
+static int save_image(const Framebuffer *fb, const char *path)
+{
+    size_t n = strlen(path);
+    if (n >= 4 && strcmp(path + n - 4, ".png") == 0)
+        return save_png(fb, path);
+    return save_ppm(fb, path);
+}
+
+/* Contexte d'une simulation headless : avance pas à pas et prend les captures. */
+typedef struct {
+    Game game;
+    Framebuffer fb;
+    const Options *opts;
+    long shots_at[MAX_SHOTS];
+    int n_shots_at;
+    long step; /* nombre de pas déjà simulés */
+    int rc;
+} Headless;
+
+static bool shot_due(const Headless *h)
+{
+    if (h->opts->shot_every != 0)
+        return h->step % h->opts->shot_every == 0;
+    for (int i = 0; i < h->n_shots_at; i++)
+        if (h->shots_at[i] == h->step)
+            return true;
+    return false;
+}
+
+static void take_shot(Headless *h, const char *path)
+{
+    draw_scene(&h->fb, &h->game);
+    if (save_image(&h->fb, path) != 0)
+        h->rc = 1;
+}
+
+/* Capture éventuelle de l'état courant (avant tout pas, puis après chacun). */
+static void headless_check_shot(Headless *h)
+{
+    if (!h->opts->shot_at && h->opts->shot_every == 0)
+        return;
+    if (!shot_due(h))
+        return;
+    char path[1024];
+    snprintf(path, sizeof path, h->opts->shot_path, (int)h->step);
+    take_shot(h, path);
+}
+
+static void headless_advance(Headless *h, const Input *in, long frames)
+{
+    for (long i = 0; i < frames; i++) {
+        game_step(&h->game, in);
+        h->step++;
+        headless_check_shot(h);
+    }
+}
+
+static bool parse_shot_list(const char *s, long *out, int *n)
+{
+    *n = 0;
+    while (*s) {
+        if (*n >= MAX_SHOTS)
+            return false;
+        char *end;
+        long v = strtol(s, &end, 10);
+        if (end == s || v < 0)
+            return false;
+        out[(*n)++] = v;
+        s = end;
+        if (*s == ',')
+            s++;
+        else if (*s != '\0')
+            return false;
+    }
+    return *n > 0;
+}
+
+/* Mode headless : pas de SDL vidéo, simulation déterministe à pas fixe. */
 static int run_headless(const Options *o)
 {
-    Framebuffer fb = {0};
-    if (fb_resize(&fb, DEFAULT_WIDTH, DEFAULT_HEIGHT) != 0) {
+    static ScriptSegment segs[MAX_SCRIPT_SEGMENTS];
+    int nsegs = 0;
+    if (o->script) {
+        nsegs = script_parse(o->script, segs, MAX_SCRIPT_SEGMENTS);
+        if (nsegs < 0) {
+            fprintf(stderr, "Script invalide : %s\n", o->script);
+            return 2;
+        }
+    }
+
+    static Headless h;
+    memset(&h, 0, sizeof h);
+    h.opts = o;
+    if (o->shot_at && !parse_shot_list(o->shot_at, h.shots_at, &h.n_shots_at)) {
+        fprintf(stderr, "Liste de captures invalide : %s\n", o->shot_at);
+        return 2;
+    }
+    if (fb_resize(&h.fb, DEFAULT_WIDTH, DEFAULT_HEIGHT) != 0) {
         fprintf(stderr, "Allocation du framebuffer impossible\n");
         return 1;
     }
-    for (long step = 0; step < o->frames; step++) {
-        /* La simulation viendra ici (un appel par pas de 1/120 s). */
+
+    game_init(&h.game, o->seed);
+    headless_check_shot(&h); /* état initial (pas 0) */
+    const Input none = {0};
+    if (o->script) {
+        for (int i = 0; i < nsegs; i++)
+            headless_advance(&h, &segs[i].in, segs[i].frames);
+    } else {
+        headless_advance(&h, &none, o->frames);
     }
-    render_frame(&fb);
-    int rc = 0;
-    if (o->dump_path && dump_ppm(&fb, o->dump_path) != 0)
-        rc = 1;
-    fb_free(&fb);
-    return rc;
+
+    if (o->shot_path && !o->shot_at && o->shot_every == 0)
+        take_shot(&h, o->shot_path);
+    if (o->print_state)
+        printf("step=%ld human x=%.4f y=%.4f vx=%.4f vy=%.4f\n", h.step,
+               (double)h.game.human.x, (double)h.game.human.y, (double)h.game.human.vx,
+               (double)h.game.human.vy);
+    fb_free(&h.fb);
+    return h.rc;
+}
+
+/* Lit le clavier par scancode : ZQSD (AZERTY) = WASD (QWERTY), même position
+ * physique, quelle que soit la disposition. */
+static Input read_input(void)
+{
+    const bool *keys = SDL_GetKeyboardState(NULL);
+    Input in;
+    in.up = keys[SDL_SCANCODE_W];
+    in.down = keys[SDL_SCANCODE_S];
+    in.left = keys[SDL_SCANCODE_A];
+    in.right = keys[SDL_SCANCODE_D];
+    return in;
 }
 
 static int run_windowed(void)
@@ -197,6 +355,12 @@ static int run_windowed(void)
     SDL_Texture *tex = NULL;
     int tex_w = 0, tex_h = 0;
 
+    Game game;
+    game_init(&game, (uint64_t)SDL_GetTicks());
+    double accumulator = 0.0;
+    Uint64 last = SDL_GetPerformanceCounter();
+    const double freq = (double)SDL_GetPerformanceFrequency();
+
     bool running = true;
     while (running) {
         SDL_Event e;
@@ -205,6 +369,19 @@ static int run_windowed(void)
                 running = false;
             else if (e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_ESCAPE)
                 running = false;
+        }
+
+        /* Pas de temps fixe, découplé du rendu. */
+        Uint64 now = SDL_GetPerformanceCounter();
+        double frame_time = (double)(now - last) / freq;
+        last = now;
+        if (frame_time > MAX_FRAME_TIME)
+            frame_time = MAX_FRAME_TIME;
+        accumulator += frame_time;
+        Input in = read_input();
+        while (accumulator >= (double)SIM_DT) {
+            game_step(&game, &in);
+            accumulator -= (double)SIM_DT;
         }
 
         int w, h;
@@ -226,7 +403,7 @@ static int run_windowed(void)
             tex_h = h;
         }
 
-        render_frame(&fb);
+        draw_scene(&fb, &game);
 
         SDL_UpdateTexture(tex, NULL, fb.px, fb.w * (int)sizeof(uint32_t));
         SDL_RenderClear(renderer);

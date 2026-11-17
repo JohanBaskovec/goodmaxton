@@ -30,6 +30,8 @@ FetchContent_MakeAvailable(SDL3)
 add_executable(goodmaxton
   src/main.c
   src/render.c
+  src/draw.c
+  src/game.c
 )
 target_include_directories(goodmaxton PRIVATE src)
 target_compile_options(goodmaxton PRIVATE -Wall -Wextra -Wpedantic)

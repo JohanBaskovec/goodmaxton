@@ -37,15 +37,43 @@ release épinglé dans `CMakeLists.txt`.
 ## Tests en headless
 
 Pour vérifier le rendu ou la simulation sans fenêtre, utiliser le mode
-headless (voir README) puis convertir l'image : 
+headless (voir le README pour toutes les options) et lire le PNG produit :
 
 ```sh
-./build/goodmaxton --headless --frames 600 --dump /tmp/out.ppm
-convert /tmp/out.ppm /tmp/out.png   # puis lire le PNG
+./build/goodmaxton --headless --script u:240,ur:120 --state --shot /tmp/out.png
+./build/goodmaxton --headless --script u:120,r:120 --shot-at 0,60,240 --shot '/tmp/s_%d.png'
 ```
 
-Toute nouvelle fonctionnalité de simulation doit rester testable ainsi : le mode
-headless ne doit jamais initialiser SDL.
+Pour comparer plusieurs étapes, assembler les captures avec
+`convert a.png b.png c.png -resize 33% +append montage.png`.
+
+Toute nouvelle fonctionnalité de simulation doit rester testable ainsi :
+- le mode headless ne doit jamais initialiser SDL vidéo ;
+- tout l'aléatoire passe par `Game.rng` (graine `--seed`), jamais par `rand()`
+  ni par l'horloge, pour que les parties restent reproductibles ;
+- la simulation n'utilise que `game_step` et des `Input` : l'IA et l'humain
+  passent par les mêmes actions.
+
+Prévu : entrées souris scriptées, `--log` des événements (frappes, fautes,
+points), vérification d'invariants à chaque pas, parties IA contre IA
+(`--matches`) et scénarios `ctest`.
+
+## Captures de la vraie fenêtre
+
+La session est sous Wayland (GNOME) : `import -window root` ne marche pas. Pour
+capturer la fenêtre du jeu et lui envoyer des touches, forcer le pilote X11
+(XWayland) :
+
+```sh
+SDL_VIDEODRIVER=x11 ./build/goodmaxton &
+WID=$(xwininfo -root -tree | grep -i goodmaxton | head -1 | awk '{print $1}')
+xdotool windowfocus --sync $WID
+xdotool keydown w; sleep 0.8; xdotool keyup w
+import -window $WID /tmp/win.png   # puis lire le PNG
+```
+
+Le timing de `xdotool` est approximatif : pour des mesures exactes, utiliser le
+mode headless.
 
 ## Règles techniques
 

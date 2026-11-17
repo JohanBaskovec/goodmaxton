@@ -28,13 +28,25 @@ Pour un build optimisé, remplacer `Debug` par `Release`.
 Sans fenêtre ni SDL vidéo, pour les tests et la vérification du rendu :
 
 ```sh
-./build/goodmaxton --headless --frames 600 --dump /tmp/out.ppm
+./build/goodmaxton --headless --script u:120,ur:60,-:30 --state --shot /tmp/out.png
+./build/goodmaxton --headless --script u:120,r:120 --shot-every 40 --shot '/tmp/s_%d.png'
 ```
 
-- `--frames N` : nombre de pas de simulation (1/120 s chacun), déterministe.
-- `--dump fichier.ppm` : écrit le framebuffer final au format PPM.
-- Code de sortie : 0 si tout va bien, 1 en cas d'erreur d'exécution, 2 si les
-  arguments sont invalides.
+| Option            | Effet                                                                  |
+|-------------------|------------------------------------------------------------------------|
+| `--frames N`      | N pas de simulation (1/120 s chacun) sans aucune entrée                |
+| `--script S`      | entrées maintenues : segments `touches:pas` séparés par des virgules ; touches = `u` (vers le filet), `d`, `l`, `r`, combinables (`ur`), ou `-` pour aucune. Incompatible avec `--frames` |
+| `--seed N`        | graine du générateur aléatoire (défaut 1) ; même graine, même partie   |
+| `--shot f`        | capture du framebuffer final ; `.png` ou `.ppm` selon l'extension       |
+| `--shot-at L`     | captures aux pas listés (`0,60,120` ; 0 = état initial) ; `f` contient `%d` |
+| `--shot-every N`  | une capture tous les N pas, état initial compris ; `f` contient `%d`   |
+| `--state`         | affiche le nombre de pas et l'état final de la simulation sur stdout   |
+
+Le `%d` du nom de fichier est remplacé par le numéro de pas.
+
+La simulation est déterministe : mêmes arguments, mêmes résultats, au bit près.
+Code de sortie : 0 si tout va bien, 1 en cas d'erreur d'exécution, 2 si les
+arguments sont invalides.
 
 ## Contrôles
 
