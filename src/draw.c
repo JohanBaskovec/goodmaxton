@@ -16,6 +16,12 @@ View view_fit(int w, int h)
     return v;
 }
 
+void view_to_court(const View *v, float sx, float sy, float *x, float *y)
+{
+    *x = (sx - v->ox) / v->scale;
+    *y = (sy - v->oy) / v->scale;
+}
+
 static float vx(const View *v, float x) { return v->ox + x * v->scale; }
 static float vy(const View *v, float y) { return v->oy + y * v->scale; }
 
@@ -99,10 +105,23 @@ static void draw_shuttle(Framebuffer *fb, const View *v, const Shuttle *s)
     fb_disc(fb, gx, sy, sr - 1.5f, RGB(250, 250, 245));
 }
 
+/* Ligne de visée entre le joueur et le curseur, de jaune à rouge selon la
+ * puissance chargée. */
+static void draw_aim(Framebuffer *fb, const View *v, const Game *g)
+{
+    if (g->aim.state != AIM_ACTIVE)
+        return;
+    float p = game_aim_power(g);
+    Color c = RGBA(255.0f, 235.0f - 170.0f * p, 60.0f - 20.0f * p, 0.9f);
+    fb_line(fb, vx(v, g->human.x), vy(v, g->human.y), vx(v, g->aim.cursor_x),
+            vy(v, g->aim.cursor_y), 0.07f * v->scale, c);
+}
+
 void draw_scene(Framebuffer *fb, const Game *g)
 {
     View v = view_fit(fb->w, fb->h);
     draw_court(fb, &v);
     draw_player(fb, &v, &g->human, RGB(235, 120, 60));
+    draw_aim(fb, &v, g);
     draw_shuttle(fb, &v, &g->shuttle);
 }

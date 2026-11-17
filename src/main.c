@@ -13,6 +13,7 @@
 #define DEFAULT_HEIGHT 1080
 #define MAX_SCRIPT_SEGMENTS 256
 #define MAX_SHOTS 256
+#define MAX_GESTURES 16
 #define MAX_FRAME_TIME 0.25 /* secondes : évite la spirale de la mort */
 
 /* Un segment de script : des entrées maintenues pendant `frames` pas. */
@@ -20,6 +21,16 @@ typedef struct {
     Input in;
     long frames;
 } ScriptSegment;
+
+/* Geste de tir scripté (headless) : appui à `start`, maintenu `hold` pas, le
+ * curseur glissant en ligne droite du point d'appui vers (tx, ty). */
+typedef struct {
+    long start, hold;
+    float tx, ty;
+    bool right;
+    bool miss; /* l'appui commence loin du joueur */
+    float sx, sy; /* point d'appui, fixé au pas de départ */
+} Gesture;
 
 typedef struct {
     bool headless;
@@ -33,6 +44,8 @@ typedef struct {
     bool log;              /* journal d'événements sur stdout (headless) */
     bool has_launch;       /* volant lancé au pas 0 (headless, pour les tests) */
     float launch[6];       /* x, y, z, vx, vy, vz */
+    Gesture gestures[MAX_GESTURES];
+    int n_gestures;
 } Options;
 
 static void usage(const char *prog)
@@ -49,6 +62,9 @@ static void usage(const char *prog)
             "  --shot-at L       captures aux pas listés (ex. 0,60,120) ; f doit contenir %%d\n"
             "  --shot-every N    une capture tous les N pas ; f doit contenir %%d\n"
             "  --launch x,y,z,vx,vy,vz  lance le volant au pas 0 (m et m/s)\n"
+            "  --gesture S,H,TX,TY[,r][,miss]  geste de tir : appui au pas S sur le joueur,\n"
+            "                    maintenu H pas, relâché en (TX,TY) ; r = clic droit ; miss =\n"
+            "                    appui loin du joueur. Répétable.\n"
             "  --log             journal des événements (lancer, filet, sol) sur stdout\n"
             "  --state           affiche l'état final de la simulation sur stdout\n",
             prog);
@@ -77,6 +93,52 @@ static bool parse_floats(const char *s, float *out, int n)
         }
     }
     return *s == '\0';
+}
+
+/* "S,H,TX,TY[,r][,miss]" */
+static bool parse_gesture(const char *arg, Gesture *g)
+{
+    char buf[128];
+    if (strlen(arg) >= sizeof buf)
+        return false;
+    strcpy(buf, arg);
+    *g = (Gesture){0};
+    char *tok[6];
+    int n = 0;
+    for (char *t = buf;;) {
+        if (n >= 6)
+            return false;
+        tok[n++] = t;
+        char *comma = strchr(t, ',');
+        if (!comma)
+            break;
+        *comma = '\0';
+        t = comma + 1;
+    }
+    if (n < 4)
+        return false;
+    char *end;
+    g->start = strtol(tok[0], &end, 10);
+    if (*end != '\0' || g->start < 0)
+        return false;
+    g->hold = strtol(tok[1], &end, 10);
+    if (*end != '\0' || g->hold < 1)
+        return false;
+    g->tx = strtof(tok[2], &end);
+    if (*end != '\0')
+        return false;
+    g->ty = strtof(tok[3], &end);
+    if (*end != '\0')
+        return false;
+    for (int i = 4; i < n; i++) {
+        if (strcmp(tok[i], "r") == 0)
+            g->right = true;
+        else if (strcmp(tok[i], "miss") == 0)
+            g->miss = true;
+        else
+            return false;
+    }
+    return true;
 }
 
 /* Vrai si le gabarit contient exactement un %d et aucun autre %. */
@@ -122,6 +184,10 @@ static int parse_args(int argc, char **argv, Options *o)
             o->print_state = true;
         } else if (strcmp(argv[i], "--log") == 0) {
             o->log = true;
+        } else if (strcmp(argv[i], "--gesture") == 0 && i + 1 < argc) {
+            if (o->n_gestures >= MAX_GESTURES || !parse_gesture(argv[++i], &o->gestures[o->n_gestures]))
+                return -1;
+            o->n_gestures++;
         } else if (strcmp(argv[i], "--launch") == 0 && i + 1 < argc) {
             if (!parse_floats(argv[++i], o->launch, 6))
                 return -1;
@@ -132,7 +198,7 @@ static int parse_args(int argc, char **argv, Options *o)
     }
     bool headless_only = o->frames != 0 || o->script || o->shot_path || o->shot_at ||
                          o->shot_every != 0 || o->print_state || o->seed != 1 || o->log ||
-                         o->has_launch;
+                         o->has_launch || o->n_gestures > 0;
     if (!o->headless && headless_only)
         return -1;
     if (o->frames != 0 && o->script)
@@ -238,6 +304,8 @@ typedef struct {
     const Options *opts;
     long shots_at[MAX_SHOTS];
     int n_shots_at;
+    Gesture gestures[MAX_GESTURES]; /* copie de travail (le point d'appui y est fixé) */
+    int n_gestures;
     long step; /* nombre de pas déjà simulés */
     int rc;
 } Headless;
@@ -271,10 +339,38 @@ static void headless_check_shot(Headless *h)
     take_shot(h, path);
 }
 
-static void headless_advance(Headless *h, const Input *in, long frames)
+/* Ajoute à `in` l'état de la souris dicté par les gestes scriptés. Le curseur
+ * reste sur le joueur hors geste. */
+static void apply_gestures(Headless *h, Input *in)
+{
+    in->mouse_x = h->game.human.x;
+    in->mouse_y = h->game.human.y;
+    for (int i = 0; i < h->n_gestures; i++) {
+        Gesture *g = &h->gestures[i];
+        if (h->step < g->start || h->step > g->start + g->hold)
+            continue;
+        if (h->step == g->start) {
+            g->sx = h->game.human.x + (g->miss ? -2.5f : 0.0f);
+            g->sy = h->game.human.y;
+        }
+        float t = (float)(h->step - g->start) / (float)g->hold;
+        in->mouse_x = g->sx + (g->tx - g->sx) * t;
+        in->mouse_y = g->sy + (g->ty - g->sy) * t;
+        if (h->step < g->start + g->hold) { /* bouton enfoncé jusqu'au pas start+hold exclu */
+            if (g->right)
+                in->mouse_right = true;
+            else
+                in->mouse_left = true;
+        }
+    }
+}
+
+static void headless_advance(Headless *h, const Input *base, long frames)
 {
     for (long i = 0; i < frames; i++) {
-        game_step(&h->game, in);
+        Input in = *base;
+        apply_gestures(h, &in);
+        game_step(&h->game, &in);
         h->step++;
         headless_check_shot(h);
     }
@@ -316,6 +412,8 @@ static int run_headless(const Options *o)
     static Headless h;
     memset(&h, 0, sizeof h);
     h.opts = o;
+    h.n_gestures = o->n_gestures;
+    memcpy(h.gestures, o->gestures, sizeof h.gestures);
     if (o->shot_at && !parse_shot_list(o->shot_at, h.shots_at, &h.n_shots_at)) {
         fprintf(stderr, "Liste de captures invalide : %s\n", o->shot_at);
         return 2;
@@ -358,15 +456,27 @@ static int run_headless(const Options *o)
 }
 
 /* Lit le clavier par scancode : ZQSD (AZERTY) = WASD (QWERTY), même position
- * physique, quelle que soit la disposition. */
-static Input read_input(void)
+ * physique, quelle que soit la disposition. La souris est convertie en mètres
+ * sur le terrain. */
+static Input read_input(SDL_Window *window, const Framebuffer *fb)
 {
     const bool *keys = SDL_GetKeyboardState(NULL);
-    Input in;
+    Input in = {0};
     in.up = keys[SDL_SCANCODE_W];
     in.down = keys[SDL_SCANCODE_S];
     in.left = keys[SDL_SCANCODE_A];
     in.right = keys[SDL_SCANCODE_D];
+
+    float mx, my;
+    SDL_MouseButtonFlags buttons = SDL_GetMouseState(&mx, &my);
+    in.mouse_left = (buttons & SDL_BUTTON_LMASK) != 0;
+    in.mouse_right = (buttons & SDL_BUTTON_RMASK) != 0;
+    int ww, wh;
+    if (fb->w > 0 && SDL_GetWindowSize(window, &ww, &wh) && ww > 0 && wh > 0) {
+        View v = view_fit(fb->w, fb->h);
+        view_to_court(&v, mx * (float)fb->w / (float)ww, my * (float)fb->h / (float)wh,
+                      &in.mouse_x, &in.mouse_y);
+    }
     return in;
 }
 
@@ -420,7 +530,7 @@ static int run_windowed(void)
         if (frame_time > MAX_FRAME_TIME)
             frame_time = MAX_FRAME_TIME;
         accumulator += frame_time;
-        Input in = read_input();
+        Input in = read_input(window, &fb);
         while (accumulator >= (double)SIM_DT) {
             game_step(&game, &in);
             accumulator -= (double)SIM_DT;

@@ -11,6 +11,9 @@ typedef struct {
 
 View view_fit(int w, int h);
 
+/* Convertit un point écran (pixels du framebuffer) en mètres sur le terrain. */
+void view_to_court(const View *v, float sx, float sy, float *x, float *y);
+
 /* Dessine la scène complète (terrain, joueurs...) dans le framebuffer. */
 void draw_scene(Framebuffer *fb, const Game *g);
 

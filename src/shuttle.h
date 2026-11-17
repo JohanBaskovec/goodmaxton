@@ -25,10 +25,20 @@ typedef struct {
     ShuttleState state;
     float x, y, z;
     float vx, vy, vz;
-    bool hit_net; /* a touché le filet pendant ce vol */
+    bool hit_net;    /* a touché le filet pendant ce vol */
+    int last_hitter; /* 0 = personne, 1 = humain, 2 = IA */
 } Shuttle;
 
 void shuttle_launch(Shuttle *s, float x, float y, float z, float vx, float vy, float vz);
+
+/* Solveur de tir. Depuis (x, y, z), cherche la vitesse initiale qui, avec la
+ * vitesse `speed` (m/s) et en tenant compte de la traînée, fait retomber le
+ * volant au sol en (tx, ty). Parmi les angles possibles, il prend le plus bas
+ * (tir tendu). Retourne false si `speed` est trop faible pour atteindre la
+ * cible : le tir est alors donné à l'angle de portée maximale et retombera
+ * trop court. */
+bool shuttle_solve_shot(float x, float y, float z, float tx, float ty, float speed, float *vx,
+                        float *vy, float *vz);
 
 /* Avance d'un pas dt. Retourne l'événement survenu pendant ce pas, s'il y en a un. */
 ShuttleEvent shuttle_step(Shuttle *s, float dt);

@@ -39,7 +39,140 @@ static void rk4(V3 *p, V3 *v, float dt)
 
 void shuttle_launch(Shuttle *s, float x, float y, float z, float vx, float vy, float vz)
 {
-    *s = (Shuttle){SHUTTLE_FLYING, x, y, z, vx, vy, vz, false};
+    *s = (Shuttle){SHUTTLE_FLYING, x, y, z, vx, vy, vz, false, 0};
+}
+
+typedef struct {
+    float range;    /* distance horizontale à l'impact au sol */
+    float z_at_net; /* hauteur quand le volant atteint la distance `net_dist` */
+} ShotSim;
+
+/* Simule un tir de vitesse `speed` et d'élévation `elev` (rad) depuis la hauteur
+ * z0, sans filet. Si net_dist > 0, relève aussi la hauteur à cette distance
+ * horizontale (là où le tir croise le plan du filet). */
+static ShotSim sim_shot(float speed, float elev, float z0, float dt, float net_dist)
+{
+    ShotSim out = {0.0f, 1e9f};
+    V3 p = {0.0f, 0.0f, z0};
+    V3 v = {speed * cosf(elev), 0.0f, speed * sinf(elev)};
+    for (int i = 0; i < 4000; i++) {
+        V3 p0 = p;
+        rk4(&p, &v, dt);
+        if (net_dist > 0.0f && p0.x < net_dist && p.x >= net_dist) {
+            float t = (net_dist - p0.x) / (p.x - p0.x);
+            out.z_at_net = p0.z + (p.z - p0.z) * t;
+        }
+        if (p.z <= 0.0f) {
+            float t = p0.z / (p0.z - p.z);
+            out.range = p0.x + (p.x - p0.x) * t;
+            return out;
+        }
+    }
+    out.range = p.x;
+    return out;
+}
+
+/* Marge au-dessus du haut du filet pour qu'un tir soit jugé « passant ». */
+#define NET_CLEARANCE 0.10f
+
+/* Affine par dichotomie la racine de range(e) = dist dans [lo, hi]. */
+static float refine_root(float speed, float z0, float dist, float lo, float hi, bool rising)
+{
+    for (int i = 0; i < 30; i++) {
+        float m = 0.5f * (lo + hi);
+        bool below = sim_shot(speed, m, z0, 1.0f / 240.0f, 0.0f).range < dist;
+        if (below == rising)
+            lo = m;
+        else
+            hi = m;
+    }
+    return 0.5f * (lo + hi);
+}
+
+bool shuttle_solve_shot(float x, float y, float z, float tx, float ty, float speed, float *vx,
+                        float *vy, float *vz)
+{
+    const float deg = 3.14159265f / 180.0f;
+    const float elev_min = -80.0f * deg, elev_max = 85.0f * deg, coarse = 1.5f * deg;
+    enum { MAX_ROOTS = 4 };
+
+    float dx = tx - x, dy = ty - y;
+    float dist = sqrtf(dx * dx + dy * dy);
+    if (dist < 1e-3f) { /* cible sous le volant : on tire vers le camp adverse */
+        dx = 0.0f;
+        dy = -1.0f;
+        dist = 0.0f;
+    } else {
+        dx /= dist;
+        dy /= dist;
+    }
+    float zz = z > 0.05f ? z : 0.05f;
+
+    /* Distance horizontale, le long du tir, jusqu'au plan du filet (y = 0). */
+    float net_dist = -1.0f;
+    if ((y > 0.0f && dy < -1e-4f) || (y < 0.0f && dy > 1e-4f))
+        net_dist = -y / dy;
+    bool crosses_net = net_dist > 0.0f && net_dist < dist;
+
+    /* Balayage grossier : intervalles d'élévation où la portée passe par `dist`. */
+    float lo[MAX_ROOTS], hi[MAX_ROOTS];
+    bool rising[MAX_ROOTS];
+    int n_roots = 0;
+    float best_elev = elev_min, best_range = -1.0f;
+    float prev_e = elev_min;
+    float prev_r = sim_shot(speed, elev_min, zz, 1.0f / 60.0f, 0.0f).range;
+    best_range = prev_r;
+    if (prev_r >= dist) { /* même le tir le plus plongeant dépasse la cible */
+        n_roots = 1;
+        lo[0] = hi[0] = elev_min;
+        rising[0] = true;
+    }
+    for (float e = elev_min + coarse; e <= elev_max; e += coarse) {
+        float r = sim_shot(speed, e, zz, 1.0f / 60.0f, 0.0f).range;
+        if (r > best_range) {
+            best_range = r;
+            best_elev = e;
+        }
+        if (n_roots < MAX_ROOTS && (prev_r < dist) != (r < dist)) {
+            lo[n_roots] = prev_e;
+            hi[n_roots] = e;
+            rising[n_roots] = r >= dist;
+            n_roots++;
+        }
+        prev_e = e;
+        prev_r = r;
+    }
+
+    float elev;
+    bool found = n_roots > 0;
+    if (!found) {
+        elev = best_elev; /* vitesse insuffisante : portée maximale, trop court */
+    } else {
+        /* Racine la plus basse qui passe au-dessus du filet ; à défaut, la plus
+         * basse (le tir finira dans le filet : c'est une faute du joueur). */
+        float first = 0.0f;
+        elev = 0.0f;
+        bool chosen = false;
+        for (int i = 0; i < n_roots; i++) {
+            float e = lo[i] == hi[i] ? lo[i] : refine_root(speed, zz, dist, lo[i], hi[i], rising[i]);
+            if (i == 0)
+                first = e;
+            if (!crosses_net ||
+                sim_shot(speed, e, zz, 1.0f / 240.0f, net_dist).z_at_net >=
+                    NET_HEIGHT + NET_CLEARANCE) {
+                elev = e;
+                chosen = true;
+                break;
+            }
+        }
+        if (!chosen)
+            elev = first;
+    }
+
+    *vx = speed * cosf(elev) * dx;
+    *vy = speed * cosf(elev) * dy;
+    *vz = speed * sinf(elev);
+    return found;
 }
 
 ShuttleEvent shuttle_step(Shuttle *s, float dt)

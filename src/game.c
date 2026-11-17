@@ -71,9 +71,109 @@ void game_launch_shuttle(Game *g, float x, float y, float z, float vx, float vy,
                 (double)vx, (double)vy, (double)vz);
 }
 
+static float charge_power(const Game *g)
+{
+    float p = (float)(g->step - g->aim.press_step) * SIM_DT / CHARGE_TIME;
+    return p < 0.0f ? 0.0f : (p > 1.0f ? 1.0f : p);
+}
+
+float game_aim_power(const Game *g)
+{
+    return g->aim.state == AIM_ACTIVE ? charge_power(g) : 0.0f;
+}
+
+float shot_speed(float power)
+{
+    return SHOT_V_MIN + (SHOT_V_MAX - SHOT_V_MIN) * power * power;
+}
+
+static void log_miss(const Game *g, const char *reason)
+{
+    if (g->log)
+        fprintf(g->log, "step=%ld t=%.3f miss who=human reason=%s\n", g->step,
+                (double)g->step * (double)SIM_DT, reason);
+}
+
+/* Relâchement du clic : tente de frapper le volant vers le curseur. */
+static void release_shot(Game *g, float tx, float ty)
+{
+    const Player *p = &g->human;
+    Shuttle *s = &g->shuttle;
+    float power = charge_power(g);
+
+    if (s->state != SHUTTLE_FLYING) {
+        log_miss(g, "no_shuttle");
+        return;
+    }
+    if (s->y <= 0.0f) {
+        log_miss(g, "other_side");
+        return;
+    }
+    float dx = s->x - p->x, dy = s->y - p->y;
+    if (sqrtf(dx * dx + dy * dy) > HIT_REACH || s->z < HIT_Z_MIN || s->z > HIT_Z_MAX) {
+        log_miss(g, "out_of_reach");
+        return;
+    }
+    if (s->last_hitter == 1) {
+        log_miss(g, "double_hit");
+        return;
+    }
+
+    float speed = shot_speed(power);
+    float vx, vy, vz;
+    bool reaches = shuttle_solve_shot(s->x, s->y, s->z, tx, ty, speed, &vx, &vy, &vz);
+    s->vx = vx;
+    s->vy = vy;
+    s->vz = vz;
+    s->hit_net = false;
+    s->last_hitter = 1;
+    if (g->log)
+        fprintf(g->log,
+                "step=%ld t=%.3f hit who=human %s power=%.2f speed=%.1f target=(%.2f,%.2f) "
+                "from=(%.2f,%.2f,%.2f) reaches=%d\n",
+                g->step, (double)g->step * (double)SIM_DT, g->aim.right ? "smash" : "normal",
+                (double)power, (double)speed, (double)tx, (double)ty, (double)s->x, (double)s->y,
+                (double)s->z, (int)reaches);
+}
+
+/* Geste souris : appui sur le joueur, glissement, relâchement. */
+static void step_aim(Game *g, const Input *in)
+{
+    bool press_l = in->mouse_left && !g->prev_left;
+    bool press_r = in->mouse_right && !g->prev_right;
+    g->prev_left = in->mouse_left;
+    g->prev_right = in->mouse_right;
+
+    if (g->aim.state == AIM_IDLE) {
+        if (!press_l && !press_r)
+            return;
+        float dx = in->mouse_x - g->human.x, dy = in->mouse_y - g->human.y;
+        bool on_player = dx * dx + dy * dy <= CLICK_RADIUS * CLICK_RADIUS;
+        g->aim.state = on_player ? AIM_ACTIVE : AIM_WHIFF;
+        g->aim.right = !press_l; /* le gauche l'emporte si les deux arrivent ensemble */
+        g->aim.press_step = g->step;
+    }
+
+    g->aim.cursor_x = in->mouse_x;
+    g->aim.cursor_y = in->mouse_y;
+
+    bool held = g->aim.right ? in->mouse_right : in->mouse_left;
+    if (held)
+        return;
+
+    /* Relâchement. */
+    AimState st = g->aim.state;
+    g->aim.state = AIM_IDLE;
+    if (st == AIM_ACTIVE)
+        release_shot(g, in->mouse_x, in->mouse_y);
+    else
+        log_miss(g, "off_player");
+}
+
 void game_step(Game *g, const Input *in)
 {
     step_player(&g->human, in);
+    step_aim(g, in);
     ShuttleEvent ev = shuttle_step(&g->shuttle, SIM_DT);
     g->step++;
     if (ev == SHUTTLE_EVENT_NET)

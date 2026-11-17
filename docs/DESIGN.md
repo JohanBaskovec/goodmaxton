@@ -114,20 +114,45 @@ Deux boutons, deux coups :
 | Clic gauche | Frappe normale | Haute et longue, vers le point visé            |
 | Clic droit  | Smash          | Même geste ; fonctionnement détaillé à définir |
 
-La vitesse initiale du volant se calcule à partir du point visé et du type de
-coup. Un solveur de tir vise ce point en tenant compte de la traînée.
+### Puissance et solveur de tir
+
+**Le point de relâchement est la cible. La durée du clic maintenu fixe la
+vitesse initiale du volant**, de `SHOT_V_MIN` = 6 m/s (amorti doux) à
+`SHOT_V_MAX` = 100 m/s, en `CHARGE_TIME` = 1 s, selon une courbe carrée pour plus
+de finesse sur les tirs doux.
+
+Un solveur (`shuttle_solve_shot`) trouve l'angle qui fait retomber le volant sur
+la cible à cette vitesse, traînée comprise :
+- Pour une vitesse donnée, il existe en général deux angles : un tir tendu et
+  une cloche. Le solveur prend **le plus bas qui passe au-dessus du filet**
+  (marge de 10 cm). Si aucun ne passe, le volant finit dans le filet : c'est une
+  faute du joueur.
+- Si la vitesse est **insuffisante** pour atteindre la cible, le volant est tiré à
+  l'angle de portée maximale et retombe **trop court**.
+- Avec la traînée réaliste (vitesse terminale 6,8 m/s), atteindre le fond du
+  terrain adverse (environ 12 m) demande au minimum 44 m/s, à environ 25° : un
+  tir « lent mais lointain » est donc un tir juste assez chargé. Une cible proche
+  avec beaucoup de puissance donne un tir plongeant et violent (un smash) si le
+  point de frappe est assez haut, sinon une cloche haute.
+
+La hauteur du point de frappe compte : un volant frappé haut permet de plonger
+sur une cible proche, un volant frappé bas oblige à monter pour passer le filet.
 
 ### Règles du geste
 
 - **Moment de la frappe** : le coup part au relâchement. Si le volant n'est pas
   dans la zone de frappe à cet instant, le joueur le rate. Il faut donc
   anticiper le geste.
+- **Zone de frappe** : le volant doit être à moins de 1 m du joueur
+  (horizontalement), entre 0,1 m et 3 m de hauteur, et de son côté du filet. Un
+  joueur ne frappe pas deux fois de suite.
 - **Tolérance du clic** : le clic doit commencer dans le disque du personnage,
   légèrement agrandi pour rester jouable.
 - **Pendant la visée** : le joueur peut continuer à se déplacer au clavier, et
   le temps n'est pas ralenti. Le point de départ du geste suit le joueur.
-- **Retour visuel** : une simple ligne relie le joueur au curseur. Le point de
-  chute prévu n'est pas affiché.
+- **Retour visuel** : une simple ligne relie le joueur au curseur, de jaune à
+  rouge selon la puissance chargée. Le point de chute prévu n'est pas affiché.
+  (La couleur est une proposition, à confirmer.)
 - **Service** : il utilise le même geste. Le serveur est immobile, et le volant
   part de sa main.
 - **Smash** : son fonctionnement sera défini plus tard. D'ici là, le clic droit

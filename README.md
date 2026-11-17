@@ -40,8 +40,9 @@ Sans fenêtre ni SDL vidéo, pour les tests et la vérification du rendu :
 | `--shot f`        | capture du framebuffer final ; `.png` ou `.ppm` selon l'extension       |
 | `--shot-at L`     | captures aux pas listés (`0,60,120` ; 0 = état initial) ; `f` contient `%d` |
 | `--shot-every N`  | une capture tous les N pas, état initial compris ; `f` contient `%d`   |
+| `--gesture S,H,TX,TY[,r][,miss]` | geste de tir scripté : appui sur le joueur au pas S, maintenu H pas, relâché en (TX,TY) ; `r` = clic droit, `miss` = appui loin du joueur. Répétable |
 | `--launch x,y,z,vx,vy,vz` | lance le volant au pas 0 (m et m/s), pour tester la physique |
-| `--log`           | journal des événements sur stdout : `launch`, `net`, `landed`, avec le pas et la position |
+| `--log`           | journal des événements sur stdout : `launch`, `hit`, `miss`, `net`, `landed`, avec le pas et la position |
 | `--state`         | affiche le nombre de pas et l'état final de la simulation sur stdout   |
 
 Le `%d` du nom de fichier est remplacé par le numéro de pas.
@@ -60,6 +61,10 @@ On se déplace au clavier, puis on vise et on tire à la souris.
 | Frappe normale  | Clic gauche **sur son joueur**, glisser vers la cible, relâcher       |
 | Smash           | Clic droit, même geste (pour l'instant identique à la frappe normale) |
 | Quitter         | Échap                                                                 |
+
+**Maintenir le clic augmente la puissance** (vitesse du volant, de 6 à 100 m/s en
+une seconde). Le point de relâchement est la cible : un tir lointain demande
+assez de puissance, un tir proche très puissant plonge sur la cible.
 
 Le tir demande de l'adresse. Si on vise mal, le volant peut retomber dehors ou
 dans son propre camp. Si le clic commence ailleurs que sur son joueur, le tir

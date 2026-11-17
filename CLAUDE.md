@@ -55,7 +55,8 @@ Toute nouvelle fonctionnalité de simulation doit rester testable ainsi :
   passent par les mêmes actions.
 
 Pour la physique : `--launch x,y,z,vx,vy,vz` lance le volant au pas 0 et `--log`
-affiche les événements (`launch`, `net`, `landed`). Les nouveaux événements
+affiche les événements (`launch`, `hit`, `miss`, `net`, `landed`). `--gesture`
+scripte un tir (appui, maintien, relâchement) sans souris. Les nouveaux événements
 (frappes, fautes, points) doivent passer par le même journal (`Game.log`).
 
 Prévu : entrées souris scriptées, vérification d'invariants à chaque pas,
