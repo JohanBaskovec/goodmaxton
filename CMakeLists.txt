@@ -32,6 +32,7 @@ add_executable(goodmaxton
   src/render.c
   src/draw.c
   src/game.c
+  src/shuttle.c
 )
 target_include_directories(goodmaxton PRIVATE src)
 target_compile_options(goodmaxton PRIVATE -Wall -Wextra -Wpedantic)

@@ -47,18 +47,24 @@ Les collisions sont gérées ainsi :
 - **Sol** (`z ≤ 0`) : le volant s'arrête et l'échange se termine. On regarde
   alors s'il est dedans ou dehors.
 - **Filet** : il est modélisé comme un plan vertical en `y = 0`, de hauteur
-  1,524 m. Si le volant le traverse en dessous de cette hauteur, il tombe du
-  côté du frappeur et la faute lui revient. Le cas du volant qui touche la
-  bande puis passe sera traité plus tard.
+  1,524 m, de poteau à poteau (`NET_HALF_WIDTH`). Si le volant le traverse en
+  dessous de cette hauteur, il s'arrête net (événement `net`) et tombe sur
+  place, du côté d'où il vient : la faute revient au frappeur. Le cas du volant
+  qui touche la bande puis passe sera traité plus tard.
 
-Le pas d'intégration est fixe (1/120 s). Le schéma (Euler semi-implicite ou
-RK2) sera choisi au moment de l'implémentation.
+Le pas d'intégration est fixe (1/120 s), avec un schéma de Runge-Kutta d'ordre 4
+(`src/shuttle.c`) : il reste précis même quand la traînée est forte (smash à
+plusieurs dizaines de m/s). Vérifications faites en headless : une chute libre de
+10 m dure 1,95 s (valeur analytique), la vitesse terminale vaut bien 6,8 m/s, et
+un dégagement atterrit au même endroit (à 0,0002 m) qu'une intégration de
+référence à pas très fin.
 
 L'affichage combine deux éléments :
 - l'**ombre** au sol en `(x, y)`, une ellipse sombre semi-transparente ;
-- le **volant**, dessiné en `(x, y − k·z)`, c'est-à-dire décalé vers le haut de
-  l'écran proportionnellement à sa hauteur. On obtient ainsi une perspective
-  oblique légère, avec un volant légèrement plus gros quand il est haut.
+- le **volant**, dessiné en `(x, y − k·z)` avec `k = 0,30` : il est décalé vers
+  le haut de l'écran proportionnellement à sa hauteur, et grossit de 3 % par
+  mètre. On obtient ainsi une perspective oblique légère. L'ombre est plus
+  petite et plus pâle quand le volant est haut.
 
 L'écart entre le volant et son ombre donne la lecture de la hauteur.
 

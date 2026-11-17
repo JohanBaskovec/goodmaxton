@@ -54,9 +54,12 @@ Toute nouvelle fonctionnalité de simulation doit rester testable ainsi :
 - la simulation n'utilise que `game_step` et des `Input` : l'IA et l'humain
   passent par les mêmes actions.
 
-Prévu : entrées souris scriptées, `--log` des événements (frappes, fautes,
-points), vérification d'invariants à chaque pas, parties IA contre IA
-(`--matches`) et scénarios `ctest`.
+Pour la physique : `--launch x,y,z,vx,vy,vz` lance le volant au pas 0 et `--log`
+affiche les événements (`launch`, `net`, `landed`). Les nouveaux événements
+(frappes, fautes, points) doivent passer par le même journal (`Game.log`).
+
+Prévu : entrées souris scriptées, vérification d'invariants à chaque pas,
+parties IA contre IA (`--matches`) et scénarios `ctest`.
 
 ## Captures de la vraie fenêtre
 

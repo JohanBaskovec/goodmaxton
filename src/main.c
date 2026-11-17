@@ -30,6 +30,9 @@ typedef struct {
     long shot_every;       /* une capture tous les N pas */
     uint64_t seed;         /* graine du générateur aléatoire de la simulation */
     bool print_state;      /* affiche l'état final sur stdout (headless) */
+    bool log;              /* journal d'événements sur stdout (headless) */
+    bool has_launch;       /* volant lancé au pas 0 (headless, pour les tests) */
+    float launch[6];       /* x, y, z, vx, vy, vz */
 } Options;
 
 static void usage(const char *prog)
@@ -45,6 +48,8 @@ static void usage(const char *prog)
             "  --shot f          capture du framebuffer final, au format .png ou .ppm\n"
             "  --shot-at L       captures aux pas listés (ex. 0,60,120) ; f doit contenir %%d\n"
             "  --shot-every N    une capture tous les N pas ; f doit contenir %%d\n"
+            "  --launch x,y,z,vx,vy,vz  lance le volant au pas 0 (m et m/s)\n"
+            "  --log             journal des événements (lancer, filet, sol) sur stdout\n"
             "  --state           affiche l'état final de la simulation sur stdout\n",
             prog);
 }
@@ -54,6 +59,24 @@ static bool parse_long(const char *s, long *out)
     char *end;
     *out = strtol(s, &end, 10);
     return *s != '\0' && *end == '\0' && *out >= 0;
+}
+
+/* Lit exactement n flottants séparés par des virgules. */
+static bool parse_floats(const char *s, float *out, int n)
+{
+    for (int i = 0; i < n; i++) {
+        char *end;
+        out[i] = strtof(s, &end);
+        if (end == s)
+            return false;
+        s = end;
+        if (i < n - 1) {
+            if (*s != ',')
+                return false;
+            s++;
+        }
+    }
+    return *s == '\0';
 }
 
 /* Vrai si le gabarit contient exactement un %d et aucun autre %. */
@@ -97,12 +120,19 @@ static int parse_args(int argc, char **argv, Options *o)
                 return -1;
         } else if (strcmp(argv[i], "--state") == 0) {
             o->print_state = true;
+        } else if (strcmp(argv[i], "--log") == 0) {
+            o->log = true;
+        } else if (strcmp(argv[i], "--launch") == 0 && i + 1 < argc) {
+            if (!parse_floats(argv[++i], o->launch, 6))
+                return -1;
+            o->has_launch = true;
         } else {
             return -1;
         }
     }
     bool headless_only = o->frames != 0 || o->script || o->shot_path || o->shot_at ||
-                         o->shot_every != 0 || o->print_state || o->seed != 1;
+                         o->shot_every != 0 || o->print_state || o->seed != 1 || o->log ||
+                         o->has_launch;
     if (!o->headless && headless_only)
         return -1;
     if (o->frames != 0 && o->script)
@@ -296,6 +326,11 @@ static int run_headless(const Options *o)
     }
 
     game_init(&h.game, o->seed);
+    if (o->log)
+        h.game.log = stdout;
+    if (o->has_launch)
+        game_launch_shuttle(&h.game, o->launch[0], o->launch[1], o->launch[2], o->launch[3],
+                            o->launch[4], o->launch[5]);
     headless_check_shot(&h); /* état initial (pas 0) */
     const Input none = {0};
     if (o->script) {
@@ -311,6 +346,13 @@ static int run_headless(const Options *o)
         printf("step=%ld human x=%.4f y=%.4f vx=%.4f vy=%.4f\n", h.step,
                (double)h.game.human.x, (double)h.game.human.y, (double)h.game.human.vx,
                (double)h.game.human.vy);
+    if (o->print_state && h.game.shuttle.state != SHUTTLE_INACTIVE) {
+        const Shuttle *sh = &h.game.shuttle;
+        const char *names[] = {"inactive", "flying", "dead"};
+        printf("shuttle %s x=%.4f y=%.4f z=%.4f vx=%.4f vy=%.4f vz=%.4f net=%d\n",
+               names[sh->state], (double)sh->x, (double)sh->y, (double)sh->z, (double)sh->vx,
+               (double)sh->vy, (double)sh->vz, (int)sh->hit_net);
+    }
     fb_free(&h.fb);
     return h.rc;
 }

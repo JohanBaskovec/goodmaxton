@@ -40,6 +40,8 @@ Sans fenêtre ni SDL vidéo, pour les tests et la vérification du rendu :
 | `--shot f`        | capture du framebuffer final ; `.png` ou `.ppm` selon l'extension       |
 | `--shot-at L`     | captures aux pas listés (`0,60,120` ; 0 = état initial) ; `f` contient `%d` |
 | `--shot-every N`  | une capture tous les N pas, état initial compris ; `f` contient `%d`   |
+| `--launch x,y,z,vx,vy,vz` | lance le volant au pas 0 (m et m/s), pour tester la physique |
+| `--log`           | journal des événements sur stdout : `launch`, `net`, `landed`, avec le pas et la position |
 | `--state`         | affiche le nombre de pas et l'état final de la simulation sur stdout   |
 
 Le `%d` du nom de fichier est remplacé par le numéro de pas.

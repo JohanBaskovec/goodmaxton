@@ -3,8 +3,10 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "rng.h"
+#include "shuttle.h"
 
 /* Simulation à pas fixe, indépendante de SDL. */
 #define SIM_HZ 120
@@ -26,10 +28,16 @@ typedef struct {
 
 typedef struct {
     Player human; /* moitié basse du terrain (y > 0) */
-    Rng rng;      /* tout l'aléatoire de la simulation passe par ici */
+    Shuttle shuttle;
+    Rng rng;   /* tout l'aléatoire de la simulation passe par ici */
+    long step; /* nombre de pas simulés */
+    FILE *log; /* journal d'événements, NULL si désactivé */
 } Game;
 
 void game_init(Game *g, uint64_t seed);
 void game_step(Game *g, const Input *in);
+
+/* Met le volant en jeu avec une position et une vitesse données (tests, services). */
+void game_launch_shuttle(Game *g, float x, float y, float z, float vx, float vy, float vz);
 
 #endif

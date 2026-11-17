@@ -9,5 +9,6 @@
 #define SHORT_SERVICE_LINE 1.98f
 #define LONG_SERVICE_LINE_DOUBLES 5.94f
 #define NET_HEIGHT 1.524f
+#define NET_HALF_WIDTH (COURT_HALF_WIDTH_DOUBLES + 0.1f) /* de poteau à poteau */
 
 #endif

@@ -10,6 +10,7 @@
 
 void game_init(Game *g, uint64_t seed)
 {
+    *g = (Game){0};
     rng_seed(&g->rng, seed);
     g->human = (Player){0.0f, COURT_HALF_LENGTH - 1.0f, 0.0f, 0.0f};
 }
@@ -53,7 +54,30 @@ static void step_player(Player *p, const Input *in)
     if (p->y > ymax)  { p->y = ymax;  p->vy = 0.0f; }
 }
 
+static void log_event(const Game *g, const char *name, const Shuttle *s)
+{
+    if (!g->log)
+        return;
+    fprintf(g->log, "step=%ld t=%.3f %s x=%.3f y=%.3f z=%.3f\n", g->step,
+            (double)g->step * (double)SIM_DT, name, (double)s->x, (double)s->y, (double)s->z);
+}
+
+void game_launch_shuttle(Game *g, float x, float y, float z, float vx, float vy, float vz)
+{
+    shuttle_launch(&g->shuttle, x, y, z, vx, vy, vz);
+    if (g->log)
+        fprintf(g->log, "step=%ld t=%.3f launch x=%.3f y=%.3f z=%.3f vx=%.3f vy=%.3f vz=%.3f\n",
+                g->step, (double)g->step * (double)SIM_DT, (double)x, (double)y, (double)z,
+                (double)vx, (double)vy, (double)vz);
+}
+
 void game_step(Game *g, const Input *in)
 {
     step_player(&g->human, in);
+    ShuttleEvent ev = shuttle_step(&g->shuttle, SIM_DT);
+    g->step++;
+    if (ev == SHUTTLE_EVENT_NET)
+        log_event(g, "net", &g->shuttle);
+    else if (ev == SHUTTLE_EVENT_LANDED)
+        log_event(g, "landed", &g->shuttle);
 }
